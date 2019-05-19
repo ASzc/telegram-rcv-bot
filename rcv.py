@@ -25,6 +25,8 @@ import cryptography.hazmat.backends
 import cryptography.hazmat.primitives
 import cryptography.hazmat.primitives.asymmetric
 
+log = logging.getLogger("rcv")
+
 #
 # Certificate generation
 #
@@ -33,9 +35,14 @@ import cryptography.hazmat.primitives.asymmetric
 # Handlers
 #
 
+async def send_welcome(message: aiogram.types.Message):
+    log.info(f"Sending welcome")
+    await message.reply("Hi!\nI'm RankedPollBot!")
+
 # TODO: can use `await message.dp.storage.redis()` to get a plain redis connection outside the FSM?
 
 async def echo(message: aiogram.types.Message):
+    log.info(f"Echo got: {message.text}")
     await message.reply(message.text)
 
 
@@ -52,9 +59,10 @@ def webhook_bot(config, register_callback, loop=None):
     redis_prefix = config["redis"]["prefix"]
 
     webhook_host = config["webhook"]["host"]
+    webhook_port = int(config["webhook"]["port"])
     webhook_path = os.path.join(
         config["webhook"]["root"],
-        base64.urlsafe_b64encode(os.urandom(21))
+        base64.urlsafe_b64encode(os.urandom(21)).decode('ascii')
     )
 
     # Setup aiogram
@@ -83,7 +91,7 @@ def webhook_bot(config, register_callback, loop=None):
     # Set up HTTPS
     ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     webhook_certificate = None
-    # Generate a self-signed certificate
+    log.info("Generating self-signed certificate")
     # https://core.telegram.org/bots/self-signed
     key = cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key(
         public_exponent=65537,
@@ -96,7 +104,7 @@ def webhook_bot(config, register_callback, loop=None):
             f.write(key.private_bytes(
                 encoding=cryptography.hazmat.primitives.serialization.Encoding.PEM,
                 format=cryptography.hazmat.primitives.serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=cryptography.hazmat.primitives.serialization.NoEncryption,
+                encryption_algorithm=cryptography.hazmat.primitives.serialization.NoEncryption(),
             ))
         name = cryptography.x509.Name([
             cryptography.x509.NameAttribute(
@@ -128,8 +136,10 @@ def webhook_bot(config, register_callback, loop=None):
 
     # Define startup and shutdown actions
     async def on_startup(dp):
+        url = f"https://{webhook_host}:{webhook_port}{webhook_path}"
+        log.info(f"Registering webhook for {url}")
         await bot.set_webhook(
-            url=f"https://{webhook_host}{webhook_path}",
+            url=url,
             certificate=webhook_certificate,
         )
 
@@ -141,6 +151,7 @@ def webhook_bot(config, register_callback, loop=None):
         await dp.storage.close()
         await dp.storage.wait_closed()
 
+    log.info("Starting webhook")
     aiogram.utils.executor.start_webhook(
         dispatcher=dp,
         webhook_path=webhook_path,
@@ -148,12 +159,13 @@ def webhook_bot(config, register_callback, loop=None):
         on_shutdown=on_shutdown,
         skip_updates=True,
         ssl_context=ssl_context,
+        port=webhook_port,
     )
 
 def main(argv):
     # Parse CLI arguments
     parser = argparse.ArgumentParser(description="Run RCV Bot server")
-    parser.add_argument("-c", "--config", help="Configuration file path")
+    parser.add_argument("-c", "--config", default="config.ini", help="Configuration file path")
     parser.add_argument("-v", "--verbose", action="store_true", help="Use DEBUG logging")
     args = parser.parse_args(argv)
 
@@ -167,8 +179,10 @@ def main(argv):
     config.read(args.config)
 
     def register(dp):
+        dp.register_message_handler(send_welcome, commands=['start', 'help'])
         dp.register_message_handler(echo)
 
+    log.info("Setting up webhook bot")
     webhook_bot(
         config=config,
         register_callback=register,
