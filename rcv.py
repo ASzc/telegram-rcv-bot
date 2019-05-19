@@ -8,9 +8,11 @@ import datetime
 import io
 import logging
 import os
+import random
 import ssl
 import sys
 import tempfile
+import time
 import typing
 
 # https://pypi.org/project/aiogram/
@@ -163,15 +165,16 @@ Use /cancel to abort creating this poll""",
         async with state.proxy() as data:
             if len(data["options"]) > 0:
                 title = data["title"]
-                formatted_options = "\n".join(f"- {o}" for o in sorted(data["options"]))
+                options = sorted(data["options"])
+                formatted_options = "\n".join(f"- {o}" for o in options)
                 vote_code = base64.b32encode(os.urandom(15)).decode('ascii').lower()
                 await state.finish()
 
-                # TODO: can use `await dp.storage.redis()` to get a plain redis connection outside the FSM?
-
-                # TODO store poll in long-term database
-                # TODO assign poll ID via redis LPUSH
-                poll_id = 1
+                redis = await dp.storage.redis()
+                poll_id = await redis.rpush(f"user_{message.from_user.id}", vote_code)
+                await redis.set(f"createtime_{vote_code}", int(time.time()))
+                await redis.set(f"title_{vote_code}", title)
+                await redis.rpush(f"options_{vote_code}", *options)
 
                 await dp.bot.send_message(
                     message.chat.id,
@@ -252,16 +255,31 @@ Use /cancel to abort creating this poll""",
                 "Poll ID must be a number. Try /polls to see which polls you have",
             )
         else:
-            # TODO redis
-            # TODO result_diagram
-            await dp.bot.send_message(
-                message.chat.id,
-                "Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
-            )
-            await dp.bot.send_message(
-                message.chat.id,
-                "TODO",
-            )
+            redis = await dp.storage.redis()
+            vote_code = await redis.lindex(f"user_{message.from_user.id}", poll_id - 1)
+            if vote_code is None:
+                await dp.bot.send_message(
+                    message.chat.id,
+                    "Poll ID does not exist. Try /polls to see which polls you have",
+                )
+            else:
+                title = await redis.get(f"title_{vote_code}")
+                options = await redis.lrange(f"options_{vote_code}", 0, -1)
+                ballots = await redis.hgetall(f"ballots_{vote_code}")
+
+                # TODO result_diagram
+                await dp.bot.send_message(
+                    message.chat.id,
+                    "Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
+                )
+                await dp.bot.send_message(
+                    message.chat.id,
+                    "TODO",
+                )
+                await redis.lrem(f"user_{message.from_user.id}", -1, vote_code)
+                await redis.delete(
+                    *(f"k_{vote_code}" for k in ("createtime", "title", "options"))
+                )
 
 
     #
@@ -269,15 +287,65 @@ Use /cancel to abort creating this poll""",
     #
 
     async def vote_start(message: aiogram.types.Message, vote_code):
-        # TODO redis
-        # TODO Options displayed via inline keyboard in random order, removed
-        # from the keyboard as they are selected and shown in ranked order (1.
-        # asd, 2. qwe, etc.) via message update through poll_vote.
-        pass
+        redis = await dp.storage.redis()
+        title = await redis.get(f"title_{vote_code}")
+        options = await redis.lrange(f"options_{vote_code}", 0, -1)
+        if all(e != None for e in [title, options]):
+            markup = aiogram.types.InlineKeyboardMarkup()
+            for i, option in random.shuffle(enumerate(options)):
+                markup.add(aiogram.types.InlineKeyboardButton(
+                    text=option,
+                    callback_data=str(i),
+                ))
+            markup.add(
+                aiogram.types.InlineKeyboardButton(
+                    text="Reset",
+                    callback_data="reset",
+                ),
+                aiogram.types.InlineKeyboardButton(
+                    text="Finish",
+                    callback_data="finish",
+                ),
+            )
+
+            await dp.bot.send_message(
+                message.chat.id,
+                """You're voting in a poll:
+{title}
+
+Select the options below in your order of preference. The first option you pick is the you like the most. If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish.
+
+Your rankings can't be changed after pressing Finish!""",
+                reply_markup=markup,
+            )
+
+            # TODO Options displayed via inline keyboard in random order, removed
+            # from the keyboard as they are selected and shown in ranked order (1.
+            # asd, 2. qwe, etc.) via message update through poll_vote.
+        else:
+            await dp.bot.send_message(
+                message.chat.id,
+                "The poll you want to vote in does not exist, maybe it ended? To make your own poll, try /help",
+            )
 
 
     @dp.callback_query_handler(lambda callback_query: True)
     async def poll_vote(callback_query: aiogram.types.CallbackQuery):
+        if callback_query.data == "reset":
+
+            callback_query.message.edit_text(TODO)
+            callback_query.message.edit_reply_markup(TODO)
+
+            pass
+        elif callback_query.data == "finish":
+            pass
+        else:
+            pass
+
+
+
+
+
         await callback_query.answer()
 
     #
