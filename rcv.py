@@ -286,42 +286,65 @@ Use /cancel to abort creating this poll""",
     # Vote in Poll
     #
 
+    def vote_text(title, selected=[], finished=False):
+        if selected:
+            formatted_options = "\n".join(f"{i}. {o}" for i, o in enumerate(selected))
+            t = f"""{title}
+
+{formatted_options}"""
+            if finished:
+                t += """
+Finished! Thanks for voting."""
+            else:
+                t += """
+If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish."""
+            return t
+        else:
+            return f"""You're voting in a poll:
+{title}
+
+Select the options below in your order of preference. The first option you pick is the you like the most. If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish.
+
+Your rankings can't be changed after pressing Finish!"""
+
+
+    def vote_markup(options, selected=[]):
+        # Hide options that have been selected, but keep the overall index
+        # value constant.
+        selected = set([int(s) for s in selected])
+        shadowed_options = []
+        for i, o in enumerate(options):
+            if i not in selected:
+                shadowed_options.append((i, o))
+
+        markup = aiogram.types.InlineKeyboardMarkup()
+        for i, option in random.shuffle(shadowed_options):
+            markup.add(aiogram.types.InlineKeyboardButton(
+                text=option,
+                callback_data=str(i),
+            ))
+        markup.add(
+            aiogram.types.InlineKeyboardButton(
+                text="Reset",
+                callback_data="reset",
+            ),
+            aiogram.types.InlineKeyboardButton(
+                text="Finish",
+                callback_data="finish",
+            ),
+        )
+
+
     async def vote_start(message: aiogram.types.Message, vote_code):
         redis = await dp.storage.redis()
         title = await redis.get(f"title_{vote_code}")
         options = await redis.lrange(f"options_{vote_code}", 0, -1)
         if all(e != None for e in [title, options]):
-            markup = aiogram.types.InlineKeyboardMarkup()
-            for i, option in random.shuffle(enumerate(options)):
-                markup.add(aiogram.types.InlineKeyboardButton(
-                    text=option,
-                    callback_data=str(i),
-                ))
-            markup.add(
-                aiogram.types.InlineKeyboardButton(
-                    text="Reset",
-                    callback_data="reset",
-                ),
-                aiogram.types.InlineKeyboardButton(
-                    text="Finish",
-                    callback_data="finish",
-                ),
-            )
-
             await dp.bot.send_message(
                 message.chat.id,
-                """You're voting in a poll:
-{title}
-
-Select the options below in your order of preference. The first option you pick is the you like the most. If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish.
-
-Your rankings can't be changed after pressing Finish!""",
-                reply_markup=markup,
+                vote_text(title),
+                reply_markup=vote_markup(options),
             )
-
-            # TODO Options displayed via inline keyboard in random order, removed
-            # from the keyboard as they are selected and shown in ranked order (1.
-            # asd, 2. qwe, etc.) via message update through poll_vote.
         else:
             await dp.bot.send_message(
                 message.chat.id,
@@ -331,20 +354,28 @@ Your rankings can't be changed after pressing Finish!""",
 
     @dp.callback_query_handler(lambda callback_query: True)
     async def poll_vote(callback_query: aiogram.types.CallbackQuery):
-        if callback_query.data == "reset":
+        message = callback_query.message
+        uid = str(message.from_user.id)
+        index_raw, vote_code = callback_query.data.split(".")
 
-            callback_query.message.edit_text(TODO)
-            callback_query.message.edit_reply_markup(TODO)
+        redis = await dp.storage.redis()
+        title = await redis.get(f"title_{vote_code}")
+        options = await redis.lrange(f"options_{vote_code}", 0, -1)
 
-            pass
-        elif callback_query.data == "finish":
-            pass
+        if index_raw != "finish":
+            if index_raw == "reset":
+                selected = []
+            else:
+                index = int(index_raw)
+                selected = (await redis.hget(f"ballots_{vote_code}", uid) or []).split(",")
+                selected.append(str(index))
+                await redis.hset(f"ballots_{vote_code}", uid, ",".join(selected))
+
+            await message.edit_text(vote_text(title, selected))
+            await message.edit_reply_markup(vote_markup(options, selected))
         else:
-            pass
-
-
-
-
+            await message.edit_text(vote_text(title, selected, True))
+            await message.edit_reply_markup(aiogram.types.ReplyKeyboardRemove())
 
         await callback_query.answer()
 
