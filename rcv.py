@@ -11,12 +11,15 @@ import os
 import ssl
 import sys
 import tempfile
+import typing
 
 # https://pypi.org/project/aiogram/
 import aiogram
 import aiogram.contrib.fsm_storage.redis
 import aiogram.dispatcher
+import aiogram.dispatcher.filters.state
 import aiogram.utils.executor
+import aiogram.utils.markdown as md
 
 # https://pypi.org/project/cryptography/
 import cryptography
@@ -28,30 +31,234 @@ import cryptography.hazmat.primitives.asymmetric
 log = logging.getLogger("rcv")
 
 #
-# Certificate generation
+# Visualization
 #
+
+async def _result_diagram(ballots):
+    # TODO https://plot.ly/python/sankey-diagram/
+    # TODO http://www.mikerobe007.ca/2018/10/london-instant-runoff-breakdown.html
+    pass
+
+async def result_diagram(ballots):
+    # Use a task since this could be an expensive operation
+    task = asyncio.create_task(_result_diagram(ballots))
+    await task
+
+#
+# State
+#
+
+class CreatePoll(aiogram.dispatcher.filters.state.StatesGroup):
+    end_date = aiogram.dispatcher.filters.state.State()
+    options = aiogram.dispatcher.filters.state.State()
 
 #
 # Handlers
 #
 
-async def send_welcome(message: aiogram.types.Message):
-    log.info(f"Sending welcome")
-    await message.reply("Hi!\nI'm RankedPollBot!")
+def register(dp):
+    # TODO: can use `await dp.storage.redis()` to get a plain redis connection outside the FSM?
 
-# TODO: can use `await message.dp.storage.redis()` to get a plain redis connection outside the FSM?
+    @dp.message_handler(commands=["start", "help"])
+    async def send_welcome(message: aiogram.types.Message):
+        await dp.bot.send_message(
+            message.chat.id,
+            """Hi, I'm RankedPollBot!
 
-async def echo(message: aiogram.types.Message):
-    log.info(f"Echo got: {message.text}")
-    await message.reply(message.text)
+I create polls where you can rank each option instead of just choosing one. This is called Ranked Choice Voting or Instant Runoff. Since voters don't need to guess how everyone else will vote, it captures the voters' preference more accurately than a conventional First Past the Post poll.
 
+Use /newpoll to create a poll
+Use /polls to show your polls""",
+        )
+
+
+    @dp.message_handler(
+        state="*",
+        commands=["cancel"],
+    )
+    async def cancel_handler(
+        message: aiogram.types.Message,
+        state: aiogram.dispatcher.FSMContext,
+    ):
+        await state.finish()
+        await dp.bot.send_message(
+            message.chat.id,
+            "Cancelled.",
+            reply_markup=aiogram.types.ReplyKeyboardRemove(),
+        )
+
+
+    @dp.message_handler(commands=["newpoll"])
+    async def new_poll(message: aiogram.types.Message):
+        await CreatePoll.end_date.set()
+
+        markup = aiogram.types.ReplyKeyboardMarkup(
+            resize_keyboard=True,
+            selective=True
+        )
+        markup.add("1", "3", "7")
+        markup.add("14", "30")
+
+        await dp.bot.send_message(
+            message.chat.id,
+            "How many days do you want your poll to run for?",
+            reply_markup=markup,
+        )
+
+
+    @dp.message_handler(
+        lambda message: not message.text.isdigit(),
+        state=CreatePoll.end_date
+    )
+    async def date_not_digit(message: aiogram.types.Message):
+        await dp.bot.send_message(
+            message.chat.id,
+            "How many days? (digits only)",
+        )
+
+
+    @dp.message_handler(
+        lambda message: not 1 <= int(message.text) <= 30,
+        state=CreatePoll.end_date
+    )
+    async def date_not_in_range(message: aiogram.types.Message):
+        await dp.bot.send_message(
+            message.chat.id,
+            "How many days? (must be between 1 and 30)"
+        )
+
+
+    @dp.message_handler(state=CreatePoll.end_date)
+    async def process_age(
+        message: aiogram.types.Message,
+        state: aiogram.dispatcher.FSMContext
+    ):
+        await CreatePoll.options.set()
+        days = int(message.text)
+        async with state.proxy() as data:
+            data["days"] = days
+            data["options"] = []
+
+        await dp.bot.send_message(
+            message.chat.id,
+            f"""Ok, your poll will run for {days} days after you first share it. Now, let's fill out the options. Send each option, one at a time. You can also:
+
+Use /done to finish
+Use /delete to remove the last entered option
+Use /cancel to abort creating this poll""",
+            reply_markup=aiogram.types.ReplyKeyboardRemove(),
+        )
+
+
+    @dp.message_handler(
+        lambda message: not 1 <= len(message.text) <= 100,
+        state=CreatePoll.options
+    )
+    async def option_wrong_length(message: aiogram.types.Message):
+        await dp.bot.send_message(
+            message.chat.id,
+            "Option is too long, try again. (100 characters max)",
+        )
+
+
+    @dp.message_handler(
+        commands=["done"],
+        state=CreatePoll.options
+    )
+    async def option_done(
+        message: aiogram.types.Message,
+        state: aiogram.dispatcher.FSMContext
+    ):
+        async with state.proxy() as data:
+            if len(data["options"]) > 0:
+                # TODO store poll in long-term database
+                # TODO assign poll ID via redis LPUSH
+                poll_id = 1
+
+                markup = aiogram.types.InlineKeyboardMarkup()
+                markup.add(aiogram.types.InlineKeyboardButton(
+                    text="Start Poll",
+                    switch_inline_query=f"startpoll {poll_id}",
+                ))
+
+                formatted_options = "\n".join(sorted(data["options"]))
+                await dp.bot.send_message(
+                    message.chat.id,
+                    f"""Ok, your poll #{poll_id} is ready. The options are:
+
+{formatted_options}
+
+When you want to share it, click the start button here""",
+                    reply_markup=markup,
+                )
+                await state.finish()
+            else:
+                await dp.bot.send_message(
+                    message.chat.id,
+                    "Your poll doesn't have any options, add some before using /done"
+                )
+
+
+
+    @dp.message_handler(
+        commands=["delete"],
+        state=CreatePoll.options
+    )
+    async def option_delete(
+        message: aiogram.types.Message,
+        state: aiogram.dispatcher.FSMContext
+    ):
+        opt = None
+        try:
+            async with state.proxy() as data:
+                opt = data["options"].pop()
+        except IndexError:
+            pass
+        if opt:
+            await dp.bot.send_message(
+                message.chat.id,
+                f"Ok, last option was deleted: {opt}",
+            )
+        else:
+            await dp.bot.send_message(
+                message.chat.id,
+                f"No options exist to delete",
+            )
+
+
+    @dp.message_handler(state=CreatePoll.options)
+    async def option_new(
+        message: aiogram.types.Message,
+        state: aiogram.dispatcher.FSMContext
+    ):
+        option = message.text
+        async with state.proxy() as data:
+            data["options"].append(option)
+
+        await dp.bot.send_message(
+            message.chat.id,
+            "Ok, next option?",
+        )
+
+
+    @dp.callback_query_handler(lambda callback_query: True)
+    async def poll_vote(callback_query: aiogram.types.CallbackQuery):
+        await callback_query.answer()
+
+
+    @dp.message_handler()
+    async def catchall(message: aiogram.types.Message):
+        await dp.bot.send_message(
+            message.chat.id,
+            f"Sorry, I don't know how to handle your message. Try /help or /cancel",
+        )
 
 #
 # Main
 #
 
 def webhook_bot(config, register_callback, loop=None):
-    # Read config
+    log.info("Applying configuration")
     api_token = config["auth"]["token"]
 
     redis_host = config["redis"]["host"]
@@ -82,10 +289,8 @@ def webhook_bot(config, register_callback, loop=None):
         storage=storage,
         loop=loop,
     )
-    # Hack to make handlers definable outside of local context
-    bot.dp = dp
 
-    # Register handlers
+    log.info("Registering handlers")
     register_callback(dp)
 
     # Set up HTTPS
@@ -134,7 +339,8 @@ def webhook_bot(config, register_callback, loop=None):
 
         ssl_context.load_cert_chain(crt_path, key_path)
 
-    # Define startup and shutdown actions
+    log.info("Defining startup and shutdown actions")
+
     async def on_startup(dp):
         url = f"https://{webhook_host}:{webhook_port}{webhook_path}"
         log.info(f"Registering webhook for {url}")
@@ -177,10 +383,6 @@ def main(argv):
     # Load configuration
     config = configparser.ConfigParser()
     config.read(args.config)
-
-    def register(dp):
-        dp.register_message_handler(send_welcome, commands=['start', 'help'])
-        dp.register_message_handler(echo)
 
     log.info("Setting up webhook bot")
     webhook_bot(
