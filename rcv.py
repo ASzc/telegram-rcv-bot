@@ -77,6 +77,7 @@ I create polls where you can rank each option instead of just choosing one. This
 
 Use /newpoll to create a poll
 Use /polls to show your polls
+Use /results <id> to show intermediate results for a poll
 Use /stoppoll <id> to stop a poll and show the results""",
             )
         else:
@@ -261,6 +262,38 @@ http://t.me/RankedPollBot?start={vote_code}""",
     # Stop Poll
     #
 
+    @dp.message_handler(commands=["results"])
+    async def results(message: aiogram.types.Message):
+        try:
+            poll_id = int(message.text.split(' ', 1)[1])
+        except IndexError:
+            await dp.bot.send_message(
+                message.chat.id,
+                "Specify a Poll ID number with the command. Try /polls to see which polls you have",
+            )
+        except ValueError:
+            await dp.bot.send_message(
+                message.chat.id,
+                "Poll ID must be a number. Try /polls to see which polls you have",
+            )
+        else:
+            redis = await dp.storage.redis()
+            vote_code = await redis.lindex(f"user_{message.from_user.id}", poll_id - 1)
+            if vote_code is None:
+                await dp.bot.send_message(
+                    message.chat.id,
+                    "Poll ID does not exist. Try /polls to see which polls you have",
+                )
+            else:
+                await results_message(poll_id, message)
+
+    async def results_message(poll_id, message):
+        # TODO result_diagram
+        await dp.bot.send_message(
+            message.chat.id,
+            f"TODO {poll_id}",
+        )
+
     @dp.message_handler(commands=["stoppoll"])
     async def stop_poll(message: aiogram.types.Message):
         try:
@@ -289,15 +322,12 @@ http://t.me/RankedPollBot?start={vote_code}""",
                 options = await redis.lrange(f"options_{vote_code}", 0, -1)
                 ballots = await redis.hgetall(f"ballots_{vote_code}")
 
-                # TODO result_diagram
                 await dp.bot.send_message(
                     message.chat.id,
                     f"Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
                 )
-                await dp.bot.send_message(
-                    message.chat.id,
-                    "TODO",
-                )
+                await results_message(poll_id, message)
+                # TODO attach results archive in json format?
                 await redis.lrem(f"user_{message.from_user.id}", -1, vote_code)
                 await redis.delete(
                     *(f"k_{vote_code}" for k in ("createtime", "title", "options"))
@@ -329,7 +359,7 @@ Your rankings can't be changed after pressing Finish!"""
             return f"""You're voting in a poll:
 {title}
 
-Select the options below in your order of preference. The first option you pick is the you like the most. If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish.
+Select the options below in your order of preference. The first option you pick is what you like the most. If you need to start over, select Reset. If you want to stop before ranking all the options, press Finish.
 
 Your rankings can't be changed after pressing Finish!"""
 
