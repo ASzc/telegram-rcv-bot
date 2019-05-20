@@ -260,7 +260,7 @@ Use /cancel to abort creating this poll""",
                 title = data["title"]
                 options = sorted(data["options"])
                 formatted_options = "\n".join(f"- {o}" for o in options)
-                vote_code = base64.b32encode(os.urandom(15)).decode('ascii').lower()
+                vote_code = base64.b32encode(os.urandom(15)).decode("ascii").lower()
                 await state.finish()
 
                 redis = await dp.storage.redis()
@@ -339,9 +339,8 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         reply = "Active polls:"
         none = True
         for i, vote_code in enumerate(vote_codes):
-            vote_code = vote_code.decode("utf-8")
             none = False
-            title = (await redis.get(f"title_{vote_code}")).decode("utf-8")
+            title = await redis.get(f"title_{vote_code}")
             reply += f"\n{i+1}. {title}"
         if none:
             reply += "\nNo polls active"
@@ -416,7 +415,6 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
                     "Poll ID does not exist. Try /polls to see which polls you have",
                 )
             else:
-                vote_code = vote_code.decode("utf-8")
                 await dp.bot.send_message(
                     message.chat.id,
                     f"Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
@@ -502,8 +500,8 @@ Your rankings can't be changed after pressing Finish!"""
 
         title = await redis.get(f"title_{vote_code}")
         if title is not None:
-            title = title.decode("utf-8")
-            options = [o.decode("utf-8") for o in (await redis.lrange(f"options_{vote_code}", 0, -1))]
+            title = title
+            options = await redis.lrange(f"options_{vote_code}", 0, -1)
             await dp.bot.send_message(
                 message.chat.id,
                 vote_text(title),
@@ -527,12 +525,12 @@ Your rankings can't be changed after pressing Finish!"""
         index_raw, vote_code = callback_query.data.split(".")
 
         redis = await dp.storage.redis()
-        title = (await redis.get(f"title_{vote_code}")).decode("utf-8")
-        options = list(o.decode("utf-8") for o in (await redis.lrange(f"options_{vote_code}", 0, -1)))
+        title = await redis.get(f"title_{vote_code}")
+        options = await redis.lrange(f"options_{vote_code}", 0, -1)
 
         raw_selected = await redis.hget(f"ballots_{vote_code}", uid)
         if raw_selected:
-            selected = raw_selected.decode('utf-8').split(",")
+            selected = raw_selected.split(",")
         else:
             selected = []
 
@@ -583,7 +581,7 @@ def webhook_bot(config, register_callback, loop=None):
     webhook_port = int(config["webhook"]["port"])
     webhook_path = os.path.join(
         config["webhook"]["root"],
-        base64.urlsafe_b64encode(os.urandom(21)).decode('ascii')
+        base64.urlsafe_b64encode(os.urandom(21)).decode("ascii")
     )
 
     # Setup aiogram
@@ -596,6 +594,7 @@ def webhook_bot(config, register_callback, loop=None):
         host=redis_host,
         port=redis_port,
         prefix=redis_prefix,
+        encoding="utf-8",
         loop=loop,
     )
     dp = aiogram.dispatcher.Dispatcher(
