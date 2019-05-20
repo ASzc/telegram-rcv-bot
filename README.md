@@ -13,11 +13,16 @@ There's probably no need for you to deploy this server yourself. To use the bot,
 ## Install
 
 ```bash
-dnf install redis
+dnf install redis npm
 systemctl enable redis
 systemctl start redis
 useradd rcv
 su - rcv
 pip3 install --user aiogram aioredis cryptography
+echo "prefix=${HOME}/.local" >> ~/.npmrc
+npm install -g svg-sankey
+git clone https://github.com/ASzc/telegram-rcv-bot.git
+cd telegram-rcv-bot
+vim config.ini
 ./rcv.py
 ```
