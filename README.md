@@ -13,7 +13,7 @@ There's probably no need for you to deploy this server yourself. To use the bot,
 ## Install
 
 ```bash
-dnf install redis npm
+dnf install redis npm ImageMagick
 systemctl enable redis
 systemctl start redis
 useradd rcv

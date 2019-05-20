@@ -147,16 +147,34 @@ async def result_diagram(options, raw_ballots):
     # Convert to SVG via layered D3 library
     with tempfile.TemporaryDirectory() as td:
         d3_json = os.path.join(td, "sanke.json")
+        svg = os.path.join(td, "sanke.svg")
+        png = os.path.join(td, "sanke.png")
+
         with open(d3_json, "w") as f:
             json.dump(chart, f, ensure_ascii=False)
-        # TODO debug only, remove
-        import shutil
-        shutil.copy(d3_json, "/tmp/a")
+
+        p = await asyncio.create_subprocess_shell(
+            f"svg-sankey --size 1280,720 --margins 150,150 {d3_json} > {svg}",
+        )
+        await p.communicate()
+
         p = await asyncio.create_subprocess_exec(
-            "svg-sankey",
-            d3_json
+            "convert",
+            "-density", "300",
+            svg,
+            png,
+        )
+        await p.communicate()
+
+        p = await asyncio.create_subprocess_exec(
+            "cat",
+            png,
+            stdout=asyncio.subprocess.PIPE,
         )
         sanke_svg, stderr = await p.communicate()
+
+        input(f"{td}/sanke.png")
+
         return sanke_svg
 
 #
