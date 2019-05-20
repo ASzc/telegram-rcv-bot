@@ -187,8 +187,8 @@ Use /cancel to abort creating this poll""",
 
 {formatted_options}
 
-To vote, follow this link and press Start:
-http://t.me/RankedPollBot?start={vote_code}""",
+To vote, [follow this link (stays within Telegram)](http://t.me/RankedPollBot?start={vote_code}) and press Start.""",
+                    parse_mode=aiogram.types.ParseMode.MARKDOWN,
                 )
             else:
                 await dp.bot.send_message(
