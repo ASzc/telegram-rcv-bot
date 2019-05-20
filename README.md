@@ -2,7 +2,7 @@
 
 ## Overview
 
-This the source code of [@RankedPollBot](https://t.me/RankedPollBot); a poll bot for the [Telegram](https://telegram.org/) messaging service. It's written in Python 3, and is APL v2 licensed.
+This the source code of [@RankedPollBot](https://t.me/RankedPollBot); a poll bot for the [Telegram](https://telegram.org/) messaging service. It's written in Python 3, and is ASL v2 licensed.
 
 Ranked Poll Bot provides polls where you can rank each option instead of just choosing one. This is called Ranked Choice Voting or [Instant Runoff](https://en.wikipedia.org/wiki/Instant-runoff_voting). Since voters don't need to guess how everyone else will vote, it captures the voters' preference more accurately than a conventional [First Past the Post](https://en.wikipedia.org/wiki/First-past-the-post_voting) poll.
 
