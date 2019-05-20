@@ -54,11 +54,14 @@ async def result_diagram(options, raw_ballots):
 
     # Count total votes in each stage, determine who is elminated
     exhausted = "exhausted"
+    paths = {}
     stages = []
+    eliminated = set()
     active = set()
     for b in ballots:
         if len(b) > 0:
             active.add(str(b[0]))
+    stage_index = 0
     while len(active) >= 1:
         stage = {a: 0 for a in active}
         stage[exhausted] = 0
@@ -73,62 +76,72 @@ async def result_diagram(options, raw_ballots):
             stage[choice] += 1
 
         last = min(filter(lambda k: k[0] != exhausted, stage.items()), key=lambda i: i[1])[0]
-        active.remove(last)
+        eliminated.add(last)
 
-    # Trace the path of each vote stage to stage
-    paths = {}
-    for i, stage in enumerate(stages):
         for ballot in ballots:
+            primary_choice = ballot[0]
+
             ballot_iter = iter(ballot)
             for choice in ballot_iter:
-                if choice in stage:
+                if choice in active:
                     break
             else:
                 choice = exhausted
 
-            try:
-                next_choice = next(ballot_iter)
-            except StopIteration:
-                next_choice = exhausted
+            if choice in eliminated or choice == exhausted:
+                # The ballots that chose an option that wasn't eliminated will
+                # always go to the same choice in the next stage.
+                next_choice = choice
+            else:
+                # The ballots that chose an option that was eliminated will go
+                # to their next best choice in the next stage.
+                try:
+                    next_choice = next(ballot_iter)
+                except StopIteration:
+                    next_choice = exhausted
 
-            # Record the vote path sizes by primary choice (#1 ranking)
-            if choice != next_choice:
-                primary_choice = ballot[0]
-                if choice not in paths:
-                    paths[choice] = {}
-                if next_choice not in paths[choice]:
-                    paths[choice][next_choice] = {}
-                if primary_choice not in paths[choice][next_choice]:
-                    paths[choice][next_choice][primary_choice] = [0, i]
-                paths[choice][next_choice][primary_choice][0] += 1
+            k_from = f"{stage_index}-{choice}"
+            k_to = f"{stage_index+1}-{next_choice}"
+
+            if k_from not in paths:
+                paths[k_from] = {}
+            if k_to not in paths[k_from]:
+                paths[k_from][k_to] = {}
+            if primary_choice not in paths[k_from][k_to]:
+                paths[k_from][k_to][primary_choice] = 0
+            paths[k_from][k_to][primary_choice] += 1
+
+        active.remove(last)
+        stage_index += 1
 
     # Convert stages into D3 Sanke data
+    node_dedup = set()
+    for node, dests in paths.items():
+        node_dedup.add(node)
+        node_dedup.update(dests.keys())
     nodes = []
-    for i, stage in enumerate(stages):
-        for option in stage:
-            if stage[option] > 0:
-                nodes.append({
-                    "id": f"{i}-{option}",
-                    "title": "Exhausted" if option == exhausted else options[int(option)],
-                })
+    for node in sorted(node_dedup):
+        index, option = node.split("-")
+        nodes.append({
+            "id": node,
+            "title": "Exhausted" if option == exhausted else options[int(option)],
+        })
 
     links = []
-    for option, path in paths.items():
-        for next_option, primary_options in path.items():
-            for primary_option, count_and_stage in primary_options.items():
-                count, stage = count_and_stage
-                next_stage = stage + 1
+    for k_from, dests in paths.items():
+        for k_to, primary_choices in dests.items():
+            for primary_choice, count in primary_choices.items():
                 links.append({
-                    "source": f"{stage}-{option}",
-                    "target": f"{next_stage}-{next_option}",
+                    "source": k_from,
+                    "target": k_to,
                     "value": count,
-                    "type": primary_option,
+                    "type": primary_choice,
                 })
 
     chart = {
         "nodes": nodes,
         "links": links,
-        "alignLinkTypes": False,
+        "alignLinkTypes": True,
     }
 
     # Convert to SVG via layered D3 library
@@ -136,6 +149,7 @@ async def result_diagram(options, raw_ballots):
         d3_json = os.path.join(td, "sanke.json")
         with open(d3_json, "w") as f:
             json.dump(chart, f, ensure_ascii=False)
+        # TODO debug only, remove
         import shutil
         shutil.copy(d3_json, "/tmp/a")
         p = await asyncio.create_subprocess_exec(
