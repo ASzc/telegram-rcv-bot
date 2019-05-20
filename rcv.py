@@ -47,7 +47,7 @@ async def result_diagram(options, raw_ballots):
 
     # Pre-split ballots
     ballots = []
-    for ballot in raw_ballots:
+    for ballot in raw_ballots.values():
         ballot = ballot.split(",")
         if ballot != [""]:
             ballots.append(ballot)
@@ -55,7 +55,10 @@ async def result_diagram(options, raw_ballots):
     # Count total votes in each stage, determine who is elminated
     exhausted = "exhausted"
     stages = []
-    active = set(str(i) for i, o in enumerate(options))
+    active = set()
+    for b in ballots:
+        if len(b) > 0:
+            active.add(str(b[0]))
     while len(active) >= 1:
         stage = {a: 0 for a in active}
         stage[exhausted] = 0
@@ -96,17 +99,18 @@ async def result_diagram(options, raw_ballots):
                 if next_choice not in paths[choice]:
                     paths[choice][next_choice] = {}
                 if primary_choice not in paths[choice][next_choice]:
-                    paths[choice][next_choice][primary_choice] = (0, i)
+                    paths[choice][next_choice][primary_choice] = [0, i]
                 paths[choice][next_choice][primary_choice][0] += 1
 
     # Convert stages into D3 Sanke data
     nodes = []
     for i, stage in enumerate(stages):
         for option in stage:
-            nodes.append({
-                "id": f"{i}-{option}",
-                "title": options[int(option)],
-            })
+            if stage[option] > 0:
+                nodes.append({
+                    "id": f"{i}-{option}",
+                    "title": "Exhausted" if option == exhausted else options[int(option)],
+                })
 
     links = []
     for option, path in paths.items():
@@ -132,6 +136,8 @@ async def result_diagram(options, raw_ballots):
         d3_json = os.path.join(td, "sanke.json")
         with open(d3_json, "w") as f:
             json.dump(chart, f, ensure_ascii=False)
+        import shutil
+        shutil.copy(d3_json, "/tmp/a")
         p = await asyncio.create_subprocess_exec(
             "svg-sankey",
             d3_json
@@ -384,7 +390,7 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         options = await redis.lrange(f"options_{vote_code}", 0, -1)
         ballots = await redis.hgetall(f"ballots_{vote_code}")
 
-        svg_bytes = result_diagram(options, ballots)
+        svg_bytes = await result_diagram(options, ballots)
 
         await dp.bot.send_photo(
             message.chat.id,
