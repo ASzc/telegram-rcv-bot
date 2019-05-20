@@ -6,6 +6,7 @@ import base64
 import configparser
 import datetime
 import io
+import json
 import logging
 import os
 import random
@@ -37,15 +38,106 @@ log = logging.getLogger("rcv")
 # Visualization
 #
 
-async def _result_diagram(ballots):
-    # TODO https://plot.ly/python/sankey-diagram/
-    # TODO http://www.mikerobe007.ca/2018/10/london-instant-runoff-breakdown.html
-    pass
+async def result_diagram(options, raw_ballots):
+    # Calculate votes in each stage:
+    #   - narrow by eliminating the least popular option.
+    #   - stop when one candidate is left.
+    #   - use virtual Exhausted column for ballots that stop short of ranking
+    #     all options.
 
-async def result_diagram(ballots):
-    # Use a task since this could be an expensive operation
-    task = asyncio.create_task(_result_diagram(ballots))
-    await task
+    # Pre-split ballots
+    ballots = []
+    for ballot in raw_ballots:
+        ballot = ballot.split(",")
+        if ballot != [""]:
+            ballots.append(ballot)
+
+    # Count total votes in each stage, determine who is elminated
+    exhausted = "exhausted"
+    stages = []
+    active = set(str(i) for i, o in enumerate(options))
+    while len(active) >= 1:
+        stage = {a: 0 for a in active}
+        stage[exhausted] = 0
+        stages.append(stage)
+
+        for ballot in ballots:
+            for choice in ballot:
+                if choice in active:
+                    break
+            else:
+                choice = exhausted
+            stage[choice] += 1
+
+        last = min(filter(lambda k: k[0] != exhausted, stage.items()), key=lambda i: i[1])[0]
+        active.remove(last)
+
+    # Trace the path of each vote stage to stage
+    paths = {}
+    for i, stage in enumerate(stages):
+        for ballot in ballots:
+            ballot_iter = iter(ballot)
+            for choice in ballot_iter:
+                if choice in stage:
+                    break
+            else:
+                choice = exhausted
+
+            try:
+                next_choice = next(ballot_iter)
+            except StopIteration:
+                next_choice = exhausted
+
+            # Record the vote path sizes by primary choice (#1 ranking)
+            if choice != next_choice:
+                primary_choice = ballot[0]
+                if choice not in paths:
+                    paths[choice] = {}
+                if next_choice not in paths[choice]:
+                    paths[choice][next_choice] = {}
+                if primary_choice not in paths[choice][next_choice]:
+                    paths[choice][next_choice][primary_choice] = (0, i)
+                paths[choice][next_choice][primary_choice][0] += 1
+
+    # Convert stages into D3 Sanke data
+    nodes = []
+    for i, stage in enumerate(stages):
+        for option in stage:
+            nodes.append({
+                "id": f"{i}-{option}",
+                "title": options[int(option)],
+            })
+
+    links = []
+    for option, path in paths.items():
+        for next_option, primary_options in path.items():
+            for primary_option, count_and_stage in primary_options.items():
+                count, stage = count_and_stage
+                next_stage = stage + 1
+                links.append({
+                    "source": f"{stage}-{option}",
+                    "target": f"{next_stage}-{next_option}",
+                    "value": count,
+                    "type": primary_option,
+                })
+
+    chart = {
+        "nodes": nodes,
+        "links": links,
+        "alignLinkTypes": False,
+    }
+
+    # Convert to SVG via layered D3 library
+    with tempfile.TemporaryDirectory() as td:
+        d3_json = os.path.join(td, "sanke.json")
+        with open(d3_json, "w") as f:
+            json.dump(chart, f, ensure_ascii=False)
+        p = await asyncio.create_subprocess_exec(
+            "svg-sankey",
+            d3_json
+        )
+        sanke_svg, stderr = await p.communicate()
+        return sanke_svg
 
 #
 # State
@@ -187,7 +279,7 @@ Use /cancel to abort creating this poll""",
 
 {formatted_options}
 
-To vote, [follow this link (stays within Telegram)](http://t.me/RankedPollBot?start={vote_code}) and press Start.""",
+To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays within Telegram) and press **Start**.""",
                     parse_mode=aiogram.types.ParseMode.MARKDOWN,
                 )
             else:
@@ -244,15 +336,15 @@ To vote, [follow this link (stays within Telegram)](http://t.me/RankedPollBot?st
     async def list_poll(message: aiogram.types.Message):
         redis = await dp.storage.redis()
         vote_codes = await redis.lrange(f"user_{message.from_user.id}", 0, -1)
-        reply = "Active polls:\n"
+        reply = "Active polls:"
         none = True
         for i, vote_code in enumerate(vote_codes):
             vote_code = vote_code.decode("utf-8")
             none = False
             title = (await redis.get(f"title_{vote_code}")).decode("utf-8")
-            reply += f"{i+1}. {title}"
+            reply += f"\n{i+1}. {title}"
         if none:
-            reply += "No polls active"
+            reply += "\nNo polls active"
         await dp.bot.send_message(
             message.chat.id,
             reply,
@@ -285,13 +377,20 @@ To vote, [follow this link (stays within Telegram)](http://t.me/RankedPollBot?st
                     "Poll ID does not exist. Try /polls to see which polls you have",
                 )
             else:
-                await results_message(poll_id, message)
+                await results_message(vote_code, message)
 
-    async def results_message(poll_id, message):
-        # TODO result_diagram
-        await dp.bot.send_message(
+    async def results_message(vote_code, message):
+        redis = await dp.storage.redis()
+        title = await redis.get(f"title_{vote_code}")
+        options = await redis.lrange(f"options_{vote_code}", 0, -1)
+        ballots = await redis.hgetall(f"ballots_{vote_code}")
+
+        svg_bytes = result_diagram(options, ballots)
+
+        await dp.bot.send_photo(
             message.chat.id,
-            f"TODO {poll_id}",
+            io.BytesIO(svg_bytes),
+            title,
         )
 
     @dp.message_handler(commands=["stoppoll"])
@@ -318,16 +417,11 @@ To vote, [follow this link (stays within Telegram)](http://t.me/RankedPollBot?st
                 )
             else:
                 vote_code = vote_code.decode("utf-8")
-                title = await redis.get(f"title_{vote_code}")
-                options = await redis.lrange(f"options_{vote_code}", 0, -1)
-                ballots = await redis.hgetall(f"ballots_{vote_code}")
-
                 await dp.bot.send_message(
                     message.chat.id,
                     f"Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
                 )
-                await results_message(poll_id, message)
-                # TODO attach results archive in json format?
+                await results_message(vote_code, message)
                 await redis.lrem(f"user_{message.from_user.id}", -1, vote_code)
                 await redis.delete(
                     *(f"k_{vote_code}" for k in ("createtime", "title", "options"))
