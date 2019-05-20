@@ -13,6 +13,11 @@ There's probably no need for you to deploy this server yourself. To use the bot,
 ## Install
 
 ```bash
+dnf install redis
+systemctl enable redis
+systemctl start redis
+useradd rcv
+su - rcv
 pip3 install --user aiogram aioredis cryptography
 ./rcv.py
 ```
