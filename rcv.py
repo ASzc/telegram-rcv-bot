@@ -445,7 +445,7 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
             else:
                 await results_message(vote_code, message)
 
-    async def results_message(vote_code, message):
+    async def results_message(vote_code, message, intermediate=True):
         redis = await dp.storage.redis()
         title = await redis.get(f"title_{vote_code}")
         options = await redis.lrange(f"options_{vote_code}", 0, -1)
@@ -455,10 +455,12 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         bio = io.BytesIO(b)
         bio.name = "Poll Results.png"
 
+        desc = "Current Leader" if intermediate else "Winner"
+
         await dp.bot.send_document(
             message.chat.id,
             bio,
-            caption=f"{title}\nWinner: {winner}",
+            caption=f"{title}\n{desc}: {winner}",
         )
 
     @dp.message_handler(commands=["stoppoll"])
@@ -488,7 +490,7 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
                     message.chat.id,
                     f"Poll {poll_id} stopped. Forward the following results to those you want to share it with.",
                 )
-                await results_message(vote_code, message)
+                await results_message(vote_code, message, intermediate=False)
                 await redis.lrem(f"user_{message.from_user.id}", -1, vote_code)
                 await redis.delete(
                     *(f"k_{vote_code}" for k in ("createtime", "title", "options"))
