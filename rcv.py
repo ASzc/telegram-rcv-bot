@@ -49,8 +49,9 @@ async def result_diagram(options, raw_ballots):
     ballots = []
     for ballot in raw_ballots.values():
         ballot = ballot.split(",")
-        if ballot != [""]:
-            ballots.append(ballot)
+        if ballot == [""]:
+            ballot = []
+        ballots.append([int(b) for b in ballot])
 
     # Count total votes in each stage, determine who is elminated
     exhausted = "exhausted"
@@ -60,9 +61,9 @@ async def result_diagram(options, raw_ballots):
     active = set()
     for b in ballots:
         if len(b) > 0:
-            active.add(str(b[0]))
+            active.add(b[0])
     stage_index = 0
-    while len(active) >= 1:
+    while len(active) > 1:
         stage = {a: 0 for a in active}
         stage[exhausted] = 0
         stages.append(stage)
@@ -75,11 +76,28 @@ async def result_diagram(options, raw_ballots):
                 choice = exhausted
             stage[choice] += 1
 
-        last = min(filter(lambda k: k[0] != exhausted, stage.items()), key=lambda i: i[1])[0]
-        eliminated.add(last)
+        print(f"Stage: {stage}")
+
+        # Eliminate the least popular option
+        # If tie for lowest, eliminate all the lowest together
+        options_by_score = {}
+        for option, score in stage.items():
+            if option == exhausted:
+                continue
+            if score not in options_by_score:
+                options_by_score[score] = set()
+            options_by_score[score].add(option)
+        lowest_score = min(options_by_score.keys())
+        #print(f"OBS:       {options_by_score}")
+        #print(f"Low:       {lowest_score}")
+        print(f"Eliminate: {options_by_score[lowest_score]}")
+        eliminated.update(options_by_score[lowest_score])
 
         for ballot in ballots:
-            primary_choice = ballot[0]
+            try:
+                primary_choice = ballot[0]
+            except IndexError:
+                primary_choice = exhausted
 
             ballot_iter = iter(ballot)
             for choice in ballot_iter:
@@ -88,16 +106,18 @@ async def result_diagram(options, raw_ballots):
             else:
                 choice = exhausted
 
-            if choice in eliminated or choice == exhausted:
+            if choice not in eliminated or choice == exhausted:
                 # The ballots that chose an option that wasn't eliminated will
                 # always go to the same choice in the next stage.
                 next_choice = choice
             else:
                 # The ballots that chose an option that was eliminated will go
-                # to their next best choice in the next stage.
-                try:
-                    next_choice = next(ballot_iter)
-                except StopIteration:
+                # to their next best choice in the next stage, assuming it
+                # hasn't been removed already.
+                for next_choice in ballot_iter:
+                    if next_choice in active and next_choice not in eliminated:
+                        break
+                else:
                     next_choice = exhausted
 
             k_from = f"{stage_index}-{choice}"
@@ -111,8 +131,11 @@ async def result_diagram(options, raw_ballots):
                 paths[k_from][k_to][primary_choice] = 0
             paths[k_from][k_to][primary_choice] += 1
 
-        active.remove(last)
+        for e in eliminated:
+            active.discard(e)
         stage_index += 1
+
+    winner = options[active.pop()] if len(active) > 0 else "Tied (no winner)"
 
     # Convert stages into D3 Sanke data
     node_dedup = set()
@@ -122,9 +145,12 @@ async def result_diagram(options, raw_ballots):
     nodes = []
     for node in sorted(node_dedup):
         index, option = node.split("-")
+        title = "Exhausted" if option == exhausted else options[int(option)]
+        if len(title) > 23:
+            title = f"{title[:21]}..."
         nodes.append({
             "id": node,
-            "title": "Exhausted" if option == exhausted else options[int(option)],
+            "title": title,
         })
 
     links = []
@@ -160,22 +186,25 @@ async def result_diagram(options, raw_ballots):
 
         p = await asyncio.create_subprocess_exec(
             "convert",
-            "-density", "300",
+            "-density", "200",
             svg,
             png,
         )
         await p.communicate()
+
+        #p = await asyncio.create_subprocess_exec("cp", png, "/tmp/a")
+        #await p.communicate()
+        #p = await asyncio.create_subprocess_exec("cp", d3_json, "/tmp/a.json")
+        #await p.communicate()
 
         p = await asyncio.create_subprocess_exec(
             "cat",
             png,
             stdout=asyncio.subprocess.PIPE,
         )
-        sanke_svg, stderr = await p.communicate()
+        sanke, stderr = await p.communicate()
 
-        input(f"{td}/sanke.png")
-
-        return sanke_svg
+        return (sanke, winner)
 
 #
 # State
@@ -422,12 +451,14 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         options = await redis.lrange(f"options_{vote_code}", 0, -1)
         ballots = await redis.hgetall(f"ballots_{vote_code}")
 
-        svg_bytes = await result_diagram(options, ballots)
+        b, winner = await result_diagram(options, ballots)
+        bio = io.BytesIO(b)
+        bio.name = "Poll Results.png"
 
-        await dp.bot.send_photo(
+        await dp.bot.send_document(
             message.chat.id,
-            io.BytesIO(svg_bytes),
-            title,
+            bio,
+            caption=f"{title}\nWinner: {winner}",
         )
 
     @dp.message_handler(commands=["stoppoll"])
