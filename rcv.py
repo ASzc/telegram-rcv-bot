@@ -161,7 +161,7 @@ async def result_diagram(options, raw_ballots):
                     "source": k_from,
                     "target": k_to,
                     "value": count,
-                    "type": primary_choice,
+                    "type": str(primary_choice),
                 })
 
     chart = {
@@ -453,14 +453,23 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
 
         b, winner = await result_diagram(options, ballots)
         bio = io.BytesIO(b)
-        bio.name = "Poll Results.png"
+        bio.name = "Vote Flow.png"
 
         desc = "Current Leader" if intermediate else "Winner"
 
         await dp.bot.send_document(
             message.chat.id,
             bio,
-            caption=f"{title}\n{desc}: {winner}",
+            caption=f"""{title}
+
+{desc}: **{winner}**
+
+Need help?
+[Alternative Vote Explained](https://youtu.be/3Y3jE3B8HsE?t=104)
+[Instant Runoff](https://en.wikipedia.org/wiki/Instant-runoff_voting#Election_procedure)
+[STV Election Example](https://youtu.be/Ac9070OIMUg?t=13)
+[Sankey Diagrams](https://en.wikipedia.org/wiki/Sankey_diagram)""",
+            parse_mode=aiogram.types.ParseMode.MARKDOWN,
         )
 
     @dp.message_handler(commands=["stoppoll"])

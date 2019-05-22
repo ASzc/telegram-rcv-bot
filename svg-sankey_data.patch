@@ -1,5 +1,5 @@
---- .local/lib/node_modules/svg-sankey/index.es5.js	2019-05-20 17:14:08.450097223 -0600
-+++ .local/lib/node_modules/svg-sankey/index.es5.js	2019-05-20 17:13:38.177881032 -0600
+--- /home/alex/.local/lib/node_modules/svg-sankey/index.es5.js	1985-10-26 02:15:00.000000000 -0600
++++ /tmp/new	2019-05-21 19:39:38.582550603 -0600
 @@ -116,7 +116,7 @@
  
    parts.push(sourceTitle + ' \u2192 ' + targetTitle);
@@ -9,12 +9,18 @@
    return parts.join('\n');
  }
  
-@@ -131,7 +131,7 @@
+@@ -130,9 +130,11 @@
+ 
    var ordering = data.metadata && data.metadata.layers ? data.metadata.layers : data.order && data.order.length ? data.order : null;
  
-   var layout = (0, _d3SankeyDiagram.sankey)().linkValue(function (d) {
+-  var layout = (0, _d3SankeyDiagram.sankey)().linkValue(function (d) {
 -    return d.data.value;
-+    return d.value;
-   }).size([width - margins.left - margins.right, height - margins.top - margins.bottom]).ordering(ordering).rankSets(data.rankSets);
+-  }).size([width - margins.left - margins.right, height - margins.top - margins.bottom]).ordering(ordering).rankSets(data.rankSets);
++  var layout = (0, _d3SankeyDiagram.sankey)()
++    .size([width - margins.left - margins.right, height - margins.top - margins.bottom])
++    .ordering(ordering).rankSets(data.rankSets);
++
++  alignLinkTypes(layout, true);
  
    if (_commander2.default.position) {
+     layout.nodePosition(function (d) {
