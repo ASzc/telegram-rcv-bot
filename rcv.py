@@ -151,7 +151,6 @@ async def result_diagram(options, raw_ballots):
         if len(title) > 23:
             title = f"{title[:21]}..."
         if node in eliminated_nodes:
-            print(node)
             title += " (Eliminated)"
         nodes.append({
             "id": node,
@@ -462,13 +461,15 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
 
         desc = "Current Leader" if intermediate else "Winner"
 
+        vote_link = f"\n[You can vote here](http://t.me/RankedPollBot?start={vote_code})\n" if intermediate else ""
+
         await dp.bot.send_document(
             message.chat.id,
             bio,
             caption=f"""{title}
 
 {desc}: **{winner}**
-
+{vote_link}
 Need help?
 [Alternative Vote Explained](https://youtu.be/3Y3jE3B8HsE?t=104)
 [Instant Runoff](https://en.wikipedia.org/wiki/Instant-runoff_voting#Election_procedure)
