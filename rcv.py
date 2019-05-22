@@ -58,6 +58,7 @@ async def result_diagram(options, raw_ballots):
     paths = {}
     stages = []
     eliminated = set()
+    eliminated_nodes = set()
     active = set()
     for b in ballots:
         if len(b) > 0:
@@ -132,6 +133,7 @@ async def result_diagram(options, raw_ballots):
             paths[k_from][k_to][primary_choice] += 1
 
         for e in eliminated:
+            eliminated_nodes.add(f"{stage_index}-{e}")
             active.discard(e)
         stage_index += 1
 
@@ -148,6 +150,9 @@ async def result_diagram(options, raw_ballots):
         title = "Exhausted" if option == exhausted else options[int(option)]
         if len(title) > 23:
             title = f"{title[:21]}..."
+        if node in eliminated_nodes:
+            print(node)
+            title += " (Eliminated)"
         nodes.append({
             "id": node,
             "title": title,
