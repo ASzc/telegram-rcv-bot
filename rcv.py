@@ -151,7 +151,7 @@ async def result_diagram(options, raw_ballots):
         if len(title) > 23:
             title = f"{title[:21]}..."
         if node in eliminated_nodes:
-            title += " (Eliminated)"
+            title += " ❌"
         nodes.append({
             "id": node,
             "title": title,
@@ -196,9 +196,11 @@ async def result_diagram(options, raw_ballots):
         )
         await p.communicate()
 
-        #p = await asyncio.create_subprocess_exec("cp", png, "/tmp/a")
-        #await p.communicate()
         #p = await asyncio.create_subprocess_exec("cp", d3_json, "/tmp/a.json")
+        #await p.communicate()
+        #p = await asyncio.create_subprocess_exec("cp", svg, "/tmp/a.svg")
+        #await p.communicate()
+        #p = await asyncio.create_subprocess_exec("cp", png, "/tmp/a.png")
         #await p.communicate()
 
         p = await asyncio.create_subprocess_exec(
