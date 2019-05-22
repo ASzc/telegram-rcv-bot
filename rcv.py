@@ -32,6 +32,9 @@ import cryptography.hazmat.backends
 import cryptography.hazmat.primitives
 import cryptography.hazmat.primitives.asymmetric
 
+# https://pypi.org/project/PyYAML/
+import yaml
+
 log = logging.getLogger("rcv")
 
 #
@@ -174,6 +177,20 @@ async def result_diagram(options, raw_ballots):
         "alignLinkTypes": True,
     }
 
+    # Summary
+    summary = yaml.dump(
+        {
+            "options": options,
+            # Wipe out UIDs
+            "ballots": sorted(raw_ballots.values()),
+            "stages": stages,
+            "chart": chart,
+        },
+        default_flow_style=False,
+        encoding="utf-8",
+        allow_unicode=True,
+    )
+
     # Convert to SVG via layered D3 library
     with tempfile.TemporaryDirectory() as td:
         d3_json = os.path.join(td, "sanke.json")
@@ -210,7 +227,7 @@ async def result_diagram(options, raw_ballots):
         )
         sanke, stderr = await p.communicate()
 
-        return (sanke, winner)
+        return (sanke, winner, summary)
 
 #
 # State
@@ -457,7 +474,7 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         options = await redis.lrange(f"options_{vote_code}", 0, -1)
         ballots = await redis.hgetall(f"ballots_{vote_code}")
 
-        b, winner = await result_diagram(options, ballots)
+        b, winner, summary = await result_diagram(options, ballots)
         bio = io.BytesIO(b)
         bio.name = "Vote Flow.png"
 
@@ -479,6 +496,15 @@ Need help?
 [Sankey Diagrams](https://en.wikipedia.org/wiki/Sankey_diagram)""",
             parse_mode=aiogram.types.ParseMode.MARKDOWN,
         )
+
+        bio = io.BytesIO(summary)
+        bio.name = "Poll Data.yaml"
+        await dp.bot.send_document(
+            message.chat.id,
+            bio,
+            caption=f"Poll data summary: {title}"
+        )
+
 
     @dp.message_handler(commands=["stoppoll"])
     async def stop_poll(message: aiogram.types.Message):
