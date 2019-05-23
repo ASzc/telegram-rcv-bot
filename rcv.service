@@ -1,0 +1,14 @@
+[Unit]
+Description=RCV Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=rcv
+Environment=PATH=/home/rcv/.local/bin:/home/rcv/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin
+WorkingDirectory=/home/rcv/telegram-rcv-bot
+ExecStart=/usr/bin/python3 /home/rcv/telegram-rcv-bot/rcv.py
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target

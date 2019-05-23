@@ -24,5 +24,8 @@ npm install -g svg-sankey
 git clone https://github.com/ASzc/telegram-rcv-bot.git
 cd telegram-rcv-bot
 vim config.ini
-./rcv.py
+exit
+curl -Lo /usr/lib/systemd/system/rcv.service https://raw.githubusercontent.com/ASzc/dawbrn/master/rcv.service
+systemctl enable rcv
+systemctl start rcv
 ```
