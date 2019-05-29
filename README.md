@@ -13,6 +13,9 @@ There's probably no need for you to deploy this server yourself. To use the bot,
 ## Install
 
 ```bash
+firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="149.154.160.0/20" port protocol="tcp" port="8443" accept'
+firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="91.108.4.0/22" port protocol="tcp" port="8443" accept'
+firewall-cmd --reload
 dnf install redis npm ImageMagick google-noto-emoji-color-fonts python3-pyyaml
 systemctl enable redis
 systemctl start redis

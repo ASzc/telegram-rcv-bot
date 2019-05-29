@@ -5,6 +5,7 @@ import asyncio
 import base64
 import configparser
 import datetime
+import hashlib
 import io
 import json
 import logging
@@ -19,6 +20,7 @@ import typing
 # https://pypi.org/project/aiogram/
 import aiogram
 import aiogram.contrib.fsm_storage.redis
+import aiogram.contrib.middlewares.logging
 import aiogram.dispatcher
 import aiogram.dispatcher.filters.state
 import aiogram.utils.exceptions
@@ -683,6 +685,19 @@ Your rankings can't be changed after pressing Finish!"""
 # Main
 #
 
+class ContextLogRecord(logging.LogRecord):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        task = asyncio.Task.current_task()
+        if task is not None:
+            if not hasattr(task, "uid"):
+                h = hashlib.md5()
+                h.update(str(id(task)).encode("ascii"))
+                task.uid = base64.b32encode(h.digest()).decode("ascii")[:15].lower()
+            self.log_context = task.uid
+        else:
+            self.log_context = "NoTask"
+
 def webhook_bot(config, register_callback, loop=None):
     log.info("Applying configuration")
     api_token = config["auth"]["token"]
@@ -716,6 +731,8 @@ def webhook_bot(config, register_callback, loop=None):
         storage=storage,
         loop=loop,
     )
+
+    dp.middleware.setup(aiogram.contrib.middlewares.logging.LoggingMiddleware("aiogram"))
 
     log.info("Registering handlers")
     register_callback(dp)
@@ -804,8 +821,11 @@ def main(argv):
 
     # Set log level
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO
+        format="{log_context} {levelname}:{name}:{message}",
+        style="{",
+        level=logging.DEBUG if args.verbose else logging.INFO,
     )
+    logging.setLogRecordFactory(ContextLogRecord)
 
     # Load configuration
     config = configparser.ConfigParser()
