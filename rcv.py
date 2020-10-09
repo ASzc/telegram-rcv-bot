@@ -193,6 +193,9 @@ async def result_diagram(options, raw_ballots):
         allow_unicode=True,
     )
 
+    if not links or not nodes:
+        return (None, None, summary)
+
     # Convert to SVG via layered D3 library
     with tempfile.TemporaryDirectory() as td:
         d3_json = os.path.join(td, "sanke.json")
@@ -477,6 +480,14 @@ To vote, [follow this link](http://t.me/RankedPollBot?start={vote_code}) (stays 
         ballots = await redis.hgetall(f"ballots_{vote_code}")
 
         b, winner, summary = await result_diagram(options, ballots)
+
+        if not b or not winner:
+            await dp.bot.send_message(
+                message.chat.id,
+                f"There are no results",
+            )
+            return
+
         bio = io.BytesIO(b)
         bio.name = "Vote Flow.png"
 
